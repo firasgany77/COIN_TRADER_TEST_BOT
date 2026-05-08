@@ -75,16 +75,16 @@ def pnl_color(value: float) -> str:
 
 
 def fetch_1h_volume(exchange, symbol: str) -> tuple[float, float]:
-    """Sum base and quote volume across the last 60 one-minute candles (rolling 1 h)."""
+    """Return base and quote volume of the current open 1H candle (matches Binance chart)."""
     try:
         binance_symbol = symbol.replace('/', '').replace(':USDT', '')
         klines = exchange.fapiPublicGetKlines({
             'symbol':   binance_symbol,
-            'interval': '1m',
-            'limit':    60,
+            'interval': '1h',
+            'limit':    1,
         })
-        base_vol  = sum(float(k[5]) for k in klines)
-        quote_vol = sum(float(k[7]) for k in klines)
+        base_vol  = float(klines[0][5])
+        quote_vol = float(klines[0][7])
         return base_vol, quote_vol
     except Exception:
         return 0.0, 0.0
