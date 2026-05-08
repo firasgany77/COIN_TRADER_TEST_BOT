@@ -13,6 +13,9 @@ import time
 import ccxt
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
+
+TZ_IL = ZoneInfo("Asia/Jerusalem")
 from rich.console import Console, Group
 from rich.table import Table
 from rich.panel import Panel
@@ -23,7 +26,7 @@ from rich import box
 load_dotenv()
 
 WINDOW_DAYS           = 7
-REFRESH_SECS          = 3   # fast-data refresh interval
+REFRESH_SECS          = 1   # fast-data refresh interval
 TRADE_REFRESH_SECS    = 60  # trade history re-fetch interval
 
 console = Console()
@@ -200,7 +203,7 @@ def build_trade_table(all_trades: list, last_fetched: str) -> tuple[Table, float
         box=box.ROUNDED, header_style="bold cyan", show_lines=False,
         title_style="bold white on dark_blue", padding=(0, 1),
     )
-    tbl.add_column("Date (UTC)",   style="dim",        min_width=20)
+    tbl.add_column("Date (IL)",    style="dim",        min_width=20)
     tbl.add_column("Symbol",       style="bold white", min_width=16)
     tbl.add_column("Side",         justify="center",   min_width=5)
     tbl.add_column("Amount",       justify="right",    min_width=10)
@@ -210,7 +213,7 @@ def build_trade_table(all_trades: list, last_fetched: str) -> tuple[Table, float
 
     total_buy = total_sell = total_fees = 0.0
     for t in all_trades:
-        date     = datetime.fromtimestamp(t['timestamp'] / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        date     = datetime.fromtimestamp(t['timestamp'] / 1000, tz=TZ_IL).strftime('%Y-%m-%d %H:%M:%S')
         fee_cost = t['fee']['cost'] if t.get('fee') else 0
         total_fees += fee_cost
         side     = t['side']
@@ -290,7 +293,7 @@ def main():
         while True:
             loop_start  = time.perf_counter()
             latencies   = {}
-            now_ts      = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+            now_ts      = datetime.now(TZ_IL).strftime('%Y-%m-%d %H:%M:%S IL')
 
             # ── Leverage map (refresh every cycle, lightweight) ────────────────
             t0 = time.perf_counter()
@@ -318,7 +321,7 @@ def main():
                 all_trades.sort(key=lambda t: t['timestamp'])
                 latencies["trades"] = round((time.perf_counter() - t0) * 1000)
                 last_trade_time    = time.perf_counter()
-                trade_last_fetched = datetime.now(timezone.utc).strftime('%H:%M:%S UTC')
+                trade_last_fetched = datetime.now(TZ_IL).strftime('%H:%M:%S IL')
                 total_buy = total_sell = total_fees = 0.0
                 for t in all_trades:
                     fee = t['fee']['cost'] if t.get('fee') else 0
