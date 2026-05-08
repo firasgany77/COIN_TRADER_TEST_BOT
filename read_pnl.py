@@ -74,6 +74,25 @@ def pnl_color(value: float) -> str:
     return "green" if value >= 0 else "red"
 
 
+def fetch_volume_snapshot(exchange, symbols: list[str]) -> list[dict]:
+    """Fetch live 24h ticker data for each symbol and return volume snapshot."""
+    rows = []
+    for symbol in symbols:
+        try:
+            t = exchange.fetch_ticker(symbol)
+            rows.append({
+                "symbol":       symbol,
+                "last":         float(t.get("last") or 0),
+                "base_volume":  float(t.get("baseVolume") or 0),
+                "quote_volume": float(t.get("quoteVolume") or 0),
+                "change_pct":   float(t.get("percentage") or 0),
+                "timestamp":    t.get("timestamp"),
+            })
+        except Exception:
+            pass
+    return rows
+
+
 def main():
     api_key    = os.getenv("EXCHANGE_API_KEY", "")
     api_secret = os.getenv("EXCHANGE_API_SECRET", "")
@@ -90,6 +109,37 @@ def main():
 
     # ── Leverage map ───────────────────────────────────────────────────────────
     leverage_map = fetch_leverage_map(exchange)
+
+    # ── Live trading volume snapshot ───────────────────────────────────────────
+    snapshot_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT']
+    snapshot_time    = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    volume_rows      = fetch_volume_snapshot(exchange, snapshot_symbols)
+
+    vol_table = Table(
+        title=f"Live Market Volume  —  {snapshot_time}",
+        box=box.ROUNDED,
+        header_style="bold cyan",
+        title_style="bold white on dark_blue",
+        padding=(0, 1),
+    )
+    vol_table.add_column("Symbol",           style="bold white", min_width=16)
+    vol_table.add_column("Last Price",       justify="right",    min_width=14)
+    vol_table.add_column("24h Change",       justify="right",    min_width=11)
+    vol_table.add_column("24h Vol (Base)",   justify="right",    min_width=18)
+    vol_table.add_column("24h Vol (USDT)",   justify="right",    min_width=18)
+
+    for row in volume_rows:
+        chg_color = pnl_color(row["change_pct"])
+        vol_table.add_row(
+            row["symbol"],
+            f"{row['last']:,.2f}",
+            Text(f"{row['change_pct']:+.2f}%", style=f"bold {chg_color}"),
+            f"{row['base_volume']:,.4f}",
+            f"{row['quote_volume']:,.2f}",
+        )
+
+    console.print()
+    console.print(vol_table)
 
     # ── Open positions ─────────────────────────────────────────────────────────
     positions      = exchange.fetch_positions()
