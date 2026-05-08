@@ -74,18 +74,37 @@ def pnl_color(value: float) -> str:
     return "green" if value >= 0 else "red"
 
 
+def fetch_1h_volume(exchange, symbol: str) -> tuple[float, float]:
+    """Sum base and quote volume across the last 60 one-minute candles (rolling 1 h)."""
+    try:
+        binance_symbol = symbol.replace('/', '').replace(':USDT', '')
+        klines = exchange.fapiPublicGetKlines({
+            'symbol':   binance_symbol,
+            'interval': '1m',
+            'limit':    60,
+        })
+        base_vol  = sum(float(k[5]) for k in klines)
+        quote_vol = sum(float(k[7]) for k in klines)
+        return base_vol, quote_vol
+    except Exception:
+        return 0.0, 0.0
+
+
 def fetch_volume_snapshot(exchange, symbols: list[str]) -> list[dict]:
-    """Fetch live 24h ticker data for each symbol and return volume snapshot."""
+    """Fetch live 24h ticker + rolling 1h volume for each symbol."""
     rows = []
     for symbol in symbols:
         try:
-            t = exchange.fetch_ticker(symbol)
+            t                       = exchange.fetch_ticker(symbol)
+            vol_1h_base, vol_1h_usd = fetch_1h_volume(exchange, symbol)
             rows.append({
                 "symbol":       symbol,
                 "last":         float(t.get("last") or 0),
                 "base_volume":  float(t.get("baseVolume") or 0),
                 "quote_volume": float(t.get("quoteVolume") or 0),
                 "change_pct":   float(t.get("percentage") or 0),
+                "vol_1h_base":  vol_1h_base,
+                "vol_1h_usd":   vol_1h_usd,
                 "timestamp":    t.get("timestamp"),
             })
         except Exception:
@@ -127,6 +146,7 @@ def main():
     vol_table.add_column("24h Change",       justify="right",    min_width=11)
     vol_table.add_column("24h Vol (Base)",   justify="right",    min_width=18)
     vol_table.add_column("24h Vol (USDT)",   justify="right",    min_width=18)
+    vol_table.add_column("1h Vol (USDT)",    justify="right",    min_width=18, style="bold magenta")
 
     for row in volume_rows:
         chg_color = pnl_color(row["change_pct"])
@@ -136,6 +156,7 @@ def main():
             Text(f"{row['change_pct']:+.2f}%", style=f"bold {chg_color}"),
             f"{row['base_volume']:,.4f}",
             f"{row['quote_volume']:,.2f}",
+            f"{row['vol_1h_usd']:,.2f}",
         )
 
     console.print()
