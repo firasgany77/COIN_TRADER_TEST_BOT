@@ -147,6 +147,7 @@ def main():
     vol_table.add_column("24h Vol (Base)",   justify="right",    min_width=18)
     vol_table.add_column("24h Vol (USDT)",   justify="right",    min_width=18)
     vol_table.add_column("1h Vol (USDT)",    justify="right",    min_width=18, style="bold magenta")
+    vol_table.add_column("1h Vol (BTC)",     justify="right",    min_width=16, style="bold magenta")
 
     for row in volume_rows:
         chg_color = pnl_color(row["change_pct"])
@@ -157,6 +158,7 @@ def main():
             f"{row['base_volume']:,.4f}",
             f"{row['quote_volume']:,.2f}",
             f"{row['vol_1h_usd']:,.2f}",
+            f"{row['vol_1h_base']:,.4f}",
         )
 
     console.print()
