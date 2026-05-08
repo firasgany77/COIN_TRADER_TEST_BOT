@@ -28,6 +28,7 @@ load_dotenv()
 WINDOW_DAYS           = 7
 REFRESH_SECS          = 1   # fast-data refresh interval
 TRADE_REFRESH_SECS    = 60  # trade history re-fetch interval
+MA_PERIODS            = [7, 25, 99]
 
 console = Console()
 
@@ -110,6 +111,26 @@ def fetch_volume_snapshot(exchange, symbols: list[str]) -> list[dict]:
     return rows
 
 
+def fetch_moving_averages(exchange, symbols: list[str]) -> list[dict]:
+    """Fetch 1H SMA for MA_PERIODS for each symbol."""
+    limit = max(MA_PERIODS) + 1
+    rows  = []
+    for symbol in symbols:
+        try:
+            binance_symbol = symbol.replace('/', '').replace(':USDT', '')
+            klines = exchange.fapiPublicGetKlines({
+                'symbol': binance_symbol, 'interval': '1h', 'limit': limit,
+            })
+            closes = [float(k[4]) for k in klines]
+            row    = {"symbol": symbol, "last": closes[-1]}
+            for p in MA_PERIODS:
+                row[f"ma{p}"] = sum(closes[-p:]) / p if len(closes) >= p else None
+            rows.append(row)
+        except Exception:
+            pass
+    return rows
+
+
 # ── Renderable builders ────────────────────────────────────────────────────────
 
 def build_header(ts: str, latencies: dict, next_refresh_in: float) -> Panel:
@@ -154,6 +175,34 @@ def build_vol_table(rows: list[dict]) -> Table:
             f"{row['vol_1h_usd']:,.2f}",
             f"{row['vol_1h_base']:,.4f}",
         )
+    return tbl
+
+
+def build_ma_table(rows: list[dict]) -> Table:
+    tbl = Table(
+        title="Moving Averages — 1H SMA",
+        box=box.ROUNDED, header_style="bold cyan",
+        title_style="bold white on dark_blue", padding=(0, 1),
+    )
+    tbl.add_column("Symbol", style="bold white", min_width=16)
+    tbl.add_column("Price",  justify="right",    min_width=14)
+    for p in MA_PERIODS:
+        tbl.add_column(f"MA{p}",   justify="right", min_width=14)
+        tbl.add_column(f"Δ MA{p}", justify="right", min_width=10)
+
+    for row in rows:
+        last  = row["last"]
+        cells: list = [row["symbol"], f"{last:,.2f}"]
+        for p in MA_PERIODS:
+            ma = row.get(f"ma{p}")
+            if ma is None:
+                cells += ["—", "—"]
+            else:
+                diff_pct = (last - ma) / ma * 100
+                color    = "green" if last > ma else "red"
+                cells.append(Text(f"{ma:,.2f}",       style=color))
+                cells.append(Text(f"{diff_pct:+.2f}%", style=f"bold {color}"))
+        tbl.add_row(*cells)
     return tbl
 
 
@@ -311,6 +360,11 @@ def main():
             volume_rows = fetch_volume_snapshot(exchange, snapshot_symbols)
             latencies["volume"] = round((time.perf_counter() - t0) * 1000)
 
+            # ── Moving averages ────────────────────────────────────────────────
+            t0 = time.perf_counter()
+            ma_rows = fetch_moving_averages(exchange, snapshot_symbols)
+            latencies["MA"] = round((time.perf_counter() - t0) * 1000)
+
             # ── Trade history (cached, re-fetched every TRADE_REFRESH_SECS) ───
             if time.perf_counter() - last_trade_time > TRADE_REFRESH_SECS:
                 trade_symbols = list({str(p['symbol']) for p in open_positions if p['symbol']} | {'BTC/USDT:USDT'})
@@ -342,6 +396,8 @@ def main():
                 build_header(now_ts, latencies, next_in),
                 "",
                 build_vol_table(volume_rows),
+                "",
+                build_ma_table(ma_rows),
                 "",
                 build_pos_table(open_positions, leverage_map),
                 "",
