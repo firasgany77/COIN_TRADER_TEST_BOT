@@ -111,8 +111,10 @@ def fetch_volume_snapshot(exchange, symbols: list[str]) -> list[dict]:
     return rows
 
 
-def fetch_moving_averages(exchange, symbols: list[str]) -> list[dict]:
-    """Fetch 1H SMA for MA_PERIODS for each symbol."""
+def fetch_moving_averages(exchange, symbols: list[str],
+                          live_prices: dict[str, float] | None = None) -> list[dict]:
+    """Fetch 1H SMA for MA_PERIODS. Replaces the current open candle's stale close
+    with the live ticker price so MAs match the Binance chart exactly."""
     limit = max(MA_PERIODS) + 1
     rows  = []
     for symbol in symbols:
@@ -122,7 +124,10 @@ def fetch_moving_averages(exchange, symbols: list[str]) -> list[dict]:
                 'symbol': binance_symbol, 'interval': '1h', 'limit': limit,
             })
             closes = [float(k[4]) for k in klines]
-            row    = {"symbol": symbol, "last": closes[-1]}
+            # Override the current (open) candle close with the live price
+            if live_prices and symbol in live_prices:
+                closes[-1] = live_prices[symbol]
+            row = {"symbol": symbol, "last": closes[-1]}
             for p in MA_PERIODS:
                 row[f"ma{p}"] = sum(closes[-p:]) / p if len(closes) >= p else None
             rows.append(row)
@@ -361,8 +366,9 @@ def main():
             latencies["volume"] = round((time.perf_counter() - t0) * 1000)
 
             # ── Moving averages ────────────────────────────────────────────────
+            live_prices = {r["symbol"]: r["last"] for r in volume_rows}
             t0 = time.perf_counter()
-            ma_rows = fetch_moving_averages(exchange, snapshot_symbols)
+            ma_rows = fetch_moving_averages(exchange, snapshot_symbols, live_prices)
             latencies["MA"] = round((time.perf_counter() - t0) * 1000)
 
             # ── Trade history (cached, re-fetched every TRADE_REFRESH_SECS) ───
