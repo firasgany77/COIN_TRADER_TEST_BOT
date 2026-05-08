@@ -1,0 +1,4 @@
+ccxt==4.5.52
+python-dotenv==1.2.2
+rich==15.0.0
+tzdata==2026.2
