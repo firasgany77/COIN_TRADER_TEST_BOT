@@ -16,6 +16,22 @@ load_dotenv()
 
 WINDOW_DAYS = 7  # Binance Futures API max window per request
 
+
+def fetch_leverage_map(exchange):
+    """Return {symbol: leverage} derived from notional / initialMargin (v3 endpoint)."""
+    try:
+        risks = exchange.fapiPrivateV3GetPositionRisk()
+        result = {}
+        for r in risks:
+            notional = float(r.get('notional', 0))
+            margin   = float(r.get('initialMargin', 0))
+            if margin > 0 and notional > 0:
+                result[r['symbol']] = round(notional / margin)
+        return result
+    except Exception:
+        return {}
+
+
 def fetch_trades_3months(exchange, symbol):
     """Paginate through 3 months of trade history in 7-day windows."""
     now   = datetime.now(timezone.utc)
@@ -37,9 +53,7 @@ def fetch_trades_3months(exchange, symbol):
             pass
         window_start = window_end
 
-    # deduplicate by trade id
-    seen = set()
-    unique = []
+    seen, unique = set(), []
     for t in trades:
         if t['id'] not in seen:
             seen.add(t['id'])
@@ -63,37 +77,43 @@ def main():
         "options": {"defaultType": "future"},
     })
 
-    # ── Open positions ─────────────────────────────────────────────────────────
-    positions = exchange.fetch_positions()
-    open_positions = [p for p in positions if float(p["contracts"]) != 0]
+    # ── Leverage map ───────────────────────────────────────────────────────────
+    leverage_map = fetch_leverage_map(exchange)
 
+    # ── Open positions ─────────────────────────────────────────────────────────
+    positions     = exchange.fetch_positions()
+    open_positions = [p for p in positions if float(p["contracts"] or 0) != 0]
+
+    print("=== Open Positions ===")
     if open_positions:
-        print("=== Open Positions ===")
-        print(f"{'Symbol':<16} {'Side':<6} {'Size':>10} {'Entry':>12} {'Mark':>12} {'Unrealized P/L':>16} {'ROI%':>8}")
-        print("-" * 86)
+        print(f"{'Symbol':<16} {'Side':<6} {'Leverage':>9} {'Size':>10} {'Entry':>12} "
+              f"{'Mark':>12} {'Unrealized P/L':>16} {'ROI%':>8}")
+        print("-" * 97)
         for p in open_positions:
-            leverage = p.get('leverage') or 1
-            initial_margin = (p['entryPrice'] * abs(p['contracts'])) / leverage
-            roi = (p['unrealizedPnl'] / initial_margin * 100) if initial_margin else 0
+            # strip ':USDT' suffix to match Binance symbol format (e.g. BTCUSDT)
+            raw_sym     = str(p['symbol'] or '').replace('/', '').replace(':USDT', '')
+            leverage    = leverage_map.get(raw_sym) or int(p.get('leverage') or 1)
+            notional    = float(p['entryPrice'] or 0) * abs(float(p['contracts'] or 0))
+            init_margin = notional / leverage
+            roi         = (float(p['unrealizedPnl'] or 0) / init_margin * 100) if init_margin else 0
             print(
-                f"{p['symbol']:<16} "
-                f"{p['side']:<6} "
-                f"{p['contracts']:>10} "
-                f"{p['entryPrice']:>12.4f} "
-                f"{p['markPrice']:>12.4f} "
-                f"{p['unrealizedPnl']:>+16.4f} "
+                f"{str(p['symbol']):<16} "
+                f"{str(p['side']):<6} "
+                f"{leverage:>8}x "
+                f"{float(p['contracts'] or 0):>10} "
+                f"{float(p['entryPrice'] or 0):>12.2f} "
+                f"{float(p['markPrice'] or 0):>12.2f} "
+                f"{float(p['unrealizedPnl'] or 0):>+16.2f} "
                 f"{roi:>+7.2f}%"
             )
     else:
         print("No open positions.")
 
     # ── Trade history (last 3 months) ─────────────────────────────────────────
-    # Collect unique symbols to query: open positions + BTC/USDT:USDT
     symbols_to_check = list({p['symbol'] for p in open_positions} | {'BTC/USDT:USDT'})
 
     all_trades = []
     for symbol in symbols_to_check:
-        print(f"\nFetching trades for {symbol}...")
         trades = fetch_trades_3months(exchange, symbol)
         all_trades.extend(trades)
 
@@ -104,11 +124,21 @@ def main():
         print("No trades found.")
         return
 
-    print(f"{'Date':<22} {'Symbol':<16} {'Side':<5} {'Amount':>10} {'Price':>12} {'Cost (USDT)':>14} {'Fee':>10}")
-    print("-" * 95)
+    print(f"{'Date':<22} {'Symbol':<16} {'Side':<5} {'Amount':>10} {'Price':>12} {'Cost (USDT)':>14} {'Fee (USDT)':>12}")
+    print("-" * 97)
+
+    total_buy_cost  = 0
+    total_sell_cost = 0
+    total_fees      = 0
+
     for t in all_trades:
         date     = datetime.fromtimestamp(t['timestamp'] / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         fee_cost = t['fee']['cost'] if t.get('fee') else 0
+        total_fees += fee_cost
+        if t['side'] == 'buy':
+            total_buy_cost += t['cost']
+        else:
+            total_sell_cost += t['cost']
         print(
             f"{date:<22} "
             f"{t['symbol']:<16} "
@@ -116,8 +146,28 @@ def main():
             f"{t['amount']:>10.4f} "
             f"{t['price']:>12.2f} "
             f"{t['cost']:>14.2f} "
-            f"{fee_cost:>10.4f}"
+            f"{fee_cost:>12.4f}"
         )
+
+    print("-" * 97)
+    print(f"{'Total Buy Cost:':<50} {total_buy_cost:>14.2f}")
+    print(f"{'Total Sell Cost:':<50} {total_sell_cost:>14.2f}")
+    print(f"{'Total Fees Paid:':<50} {total_fees:>14.4f}")
+
+    # ROI summary using trade cost as initial margin base
+    for p in open_positions:
+        raw_sym     = str(p['symbol'] or '').replace('/', '').replace(':USDT', '')
+        leverage    = leverage_map.get(raw_sym) or int(p.get('leverage') or 1)
+        notional    = float(p['entryPrice'] or 0) * abs(float(p['contracts'] or 0))
+        init_margin = notional / leverage
+        roi         = (float(p['unrealizedPnl'] or 0) / init_margin * 100) if init_margin else 0
+        print(f"\n{'Position:':<20} {p['symbol']}")
+        print(f"{'Leverage:':<20} {leverage}x")
+        print(f"{'Notional Value:':<20} {notional:,.2f} USDT")
+        print(f"{'Initial Margin:':<20} {init_margin:,.2f} USDT")
+        print(f"{'Unrealized P/L:':<20} {p['unrealizedPnl']:+,.2f} USDT")
+        print(f"{'ROI%:':<20} {roi:+.2f}%")
+
 
 if __name__ == "__main__":
     main()
