@@ -124,7 +124,6 @@ def fetch_moving_averages(exchange, symbols: list[str],
                 'symbol': binance_symbol, 'interval': '1h', 'limit': limit,
             })
             closes = [float(k[4]) for k in klines]
-            # Override the current (open) candle close with the live price
             if live_prices and symbol in live_prices:
                 closes[-1] = live_prices[symbol]
             row = {"symbol": symbol, "last": closes[-1]}
@@ -205,7 +204,7 @@ def build_ma_table(rows: list[dict]) -> Table:
             else:
                 diff_pct = (last - ma) / ma * 100
                 color    = "green" if last > ma else "red"
-                cells.append(Text(f"{ma:,.2f}",       style=color))
+                cells.append(Text(f"{ma:,.2f}",        style=color))
                 cells.append(Text(f"{diff_pct:+.2f}%", style=f"bold {color}"))
         tbl.add_row(*cells)
     return tbl
@@ -257,7 +256,7 @@ def build_trade_table(all_trades: list, last_fetched: str) -> tuple[Table, float
         box=box.ROUNDED, header_style="bold cyan", show_lines=False,
         title_style="bold white on dark_blue", padding=(0, 1),
     )
-    tbl.add_column("Date (IL)",    style="dim",        min_width=20)
+    tbl.add_column("Date (UTC)",   style="dim",        min_width=20)
     tbl.add_column("Symbol",       style="bold white", min_width=16)
     tbl.add_column("Side",         justify="center",   min_width=5)
     tbl.add_column("Amount",       justify="right",    min_width=10)
@@ -381,7 +380,7 @@ def main():
                 all_trades.sort(key=lambda t: t['timestamp'])
                 latencies["trades"] = round((time.perf_counter() - t0) * 1000)
                 last_trade_time    = time.perf_counter()
-                trade_last_fetched = datetime.now(TZ_IL).strftime('%H:%M:%S IL')
+                trade_last_fetched = datetime.now(timezone.utc).strftime('%H:%M:%S UTC')
                 total_buy = total_sell = total_fees = 0.0
                 for t in all_trades:
                     fee = t['fee']['cost'] if t.get('fee') else 0
