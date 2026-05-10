@@ -11,6 +11,9 @@ Credentials:
 import os
 import time
 import ccxt
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -29,8 +32,32 @@ WINDOW_DAYS           = 7
 REFRESH_SECS          = 1   # fast-data refresh interval
 TRADE_REFRESH_SECS    = 60  # trade history re-fetch interval
 MA_PERIODS            = [7, 25, 99]
+EMAIL_RECIPIENT       = "firasgany7@gmail.com"
 
 console = Console()
+
+
+def send_email(subject: str, body: str) -> bool:
+    """Send email notification via Gmail SMTP. Credentials from .env: EMAIL_USER, EMAIL_PASSWORD."""
+    try:
+        email_user = os.getenv("EMAIL_USER", "")
+        email_pass = os.getenv("EMAIL_PASSWORD", "")
+        if not email_user or not email_pass:
+            console.print("[dim]Email credentials not set in .env (EMAIL_USER, EMAIL_PASSWORD)[/dim]")
+            return False
+        msg = MIMEMultipart()
+        msg["From"]    = email_user
+        msg["To"]      = EMAIL_RECIPIENT
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(email_user, email_pass)
+            server.send_message(msg)
+        console.print(f"[green]✓ Email sent to {EMAIL_RECIPIENT}[/green]")
+        return True
+    except Exception as e:
+        console.print(f"[red]✗ Failed to send email: {e}[/red]")
+        return False
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -341,6 +368,7 @@ def main():
     trade_last_fetched  = "never"
     last_trade_time     = 0.0
     total_buy = total_sell = total_fees = 0.0
+    roi_state           = {}  # Track ROI sign changes: {symbol: prev_roi_sign}
 
     with Live(console=console, screen=True, refresh_per_second=2) as live:
         while True:
@@ -358,6 +386,30 @@ def main():
             positions      = exchange.fetch_positions()
             latencies["positions"] = round((time.perf_counter() - t0) * 1000)
             open_positions = [p for p in positions if float(p["contracts"] or 0) != 0]
+
+            # ── Check for ROI sign changes (loss → profit) ──────────────────────
+            for p in open_positions:
+                raw_sym     = str(p['symbol'] or '').replace('/', '').replace(':USDT', '')
+                leverage    = leverage_map.get(raw_sym) or int(p.get('leverage') or 1)
+                notional    = float(p['entryPrice'] or 0) * abs(float(p['contracts'] or 0))
+                init_margin = notional / leverage if leverage else 0
+                upnl        = float(p['unrealizedPnl'] or 0)
+                roi         = (upnl / init_margin * 100) if init_margin else 0
+                roi_sign    = 1 if roi >= 0 else -1
+                prev_sign   = roi_state.get(p['symbol'], 0)
+
+                if prev_sign == -1 and roi_sign == 1:
+                    send_email(
+                        f"🎉 Position Breakeven: {p['symbol']} is now in PROFIT",
+                        f"Position {p['symbol']} has crossed from loss to profit!\n\n"
+                        f"ROI: {roi:+.2f}%\n"
+                        f"Unrealized P/L: {upnl:+,.2f} USDT\n"
+                        f"Entry Price: {float(p['entryPrice'] or 0):,.2f}\n"
+                        f"Current Price: {float(p['markPrice'] or 0):,.2f}\n"
+                        f"Leverage: {leverage}x\n\n"
+                        f"Time: {datetime.now(TZ_IL).strftime('%Y-%m-%d %H:%M:%S IL')}"
+                    )
+                roi_state[p['symbol']] = roi_sign
 
             # ── Volume snapshot ────────────────────────────────────────────────
             t0 = time.perf_counter()
