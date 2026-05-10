@@ -66,6 +66,21 @@ def pnl_color(value: float) -> str:
     return "green" if value >= 0 else "red"
 
 
+def fmt_price(price: float) -> str:
+    """Format a price with enough decimals to always show non-zero significant digits."""
+    if price == 0:
+        return "0.00"
+    abs_p = abs(price)
+    if abs_p >= 100:
+        return f"{price:,.2f}"
+    elif abs_p >= 1:
+        return f"{price:,.4f}"
+    elif abs_p >= 0.01:
+        return f"{price:,.6f}"
+    else:
+        return f"{price:,.8f}"
+
+
 def fetch_leverage_map(exchange) -> dict:
     try:
         risks = exchange.fapiPrivateV3GetPositionRisk()
@@ -199,7 +214,7 @@ def build_vol_table(rows: list[dict]) -> Table:
         chg_color = pnl_color(row["change_pct"])
         tbl.add_row(
             row["symbol"],
-            f"{row['last']:,.2f}",
+            fmt_price(row['last']),
             Text(f"{row['change_pct']:+.2f}%", style=f"bold {chg_color}"),
             f"{row['base_volume']:,.4f}",
             f"{row['quote_volume']:,.2f}",
@@ -223,7 +238,7 @@ def build_ma_table(rows: list[dict]) -> Table:
 
     for row in rows:
         last  = row["last"]
-        cells: list = [row["symbol"], f"{last:,.2f}"]
+        cells: list = [row["symbol"], fmt_price(last)]
         for p in MA_PERIODS:
             ma = row.get(f"ma{p}")
             if ma is None:
@@ -231,7 +246,7 @@ def build_ma_table(rows: list[dict]) -> Table:
             else:
                 diff_pct = (last - ma) / ma * 100
                 color    = "green" if last > ma else "red"
-                cells.append(Text(f"{ma:,.2f}",        style=color))
+                cells.append(Text(fmt_price(ma),       style=color))
                 cells.append(Text(f"{diff_pct:+.2f}%", style=f"bold {color}"))
         tbl.add_row(*cells)
     return tbl
@@ -267,8 +282,8 @@ def build_pos_table(open_positions: list, leverage_map: dict) -> Table:
                 Text(side.upper(), style="green" if side == "long" else "red"),
                 f"{leverage}x",
                 f"{float(p['contracts'] or 0):.4f}",
-                f"{float(p['entryPrice'] or 0):,.2f}",
-                f"{float(p['markPrice'] or 0):,.2f}",
+                fmt_price(float(p['entryPrice'] or 0)),
+                fmt_price(float(p['markPrice'] or 0)),
                 Text(f"{upnl:+,.2f} USDT", style=f"bold {color}"),
                 Text(f"{roi:+.2f}%",        style=f"bold {color}"),
             )
@@ -305,7 +320,7 @@ def build_trade_table(all_trades: list, last_fetched: str) -> tuple[Table, float
             date, t['symbol'],
             Text(side.upper(), style="green" if side == "buy" else "red"),
             f"{t['amount']:.4f}",
-            f"{t['price']:,.2f}",
+            fmt_price(t['price']),
             f"{t['cost']:,.2f}",
             f"{fee_cost:.4f}",
         )
@@ -404,8 +419,8 @@ def main():
                         f"Position {p['symbol']} has crossed from loss to profit!\n\n"
                         f"ROI: {roi:+.2f}%\n"
                         f"Unrealized P/L: {upnl:+,.2f} USDT\n"
-                        f"Entry Price: {float(p['entryPrice'] or 0):,.2f}\n"
-                        f"Current Price: {float(p['markPrice'] or 0):,.2f}\n"
+                        f"Entry Price: {fmt_price(float(p['entryPrice'] or 0))}\n"
+                        f"Current Price: {fmt_price(float(p['markPrice'] or 0))}\n"
                         f"Leverage: {leverage}x\n\n"
                         f"Time: {datetime.now(TZ_IL).strftime('%Y-%m-%d %H:%M:%S IL')}"
                     )
@@ -452,11 +467,11 @@ def main():
             renderables = [
                 build_header(now_ts, latencies, next_in),
                 "",
+                build_pos_table(open_positions, leverage_map),
+                "",
                 build_vol_table(volume_rows),
                 "",
                 build_ma_table(ma_rows),
-                "",
-                build_pos_table(open_positions, leverage_map),
                 "",
                 trade_tbl,
             ]
